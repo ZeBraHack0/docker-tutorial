@@ -202,7 +202,7 @@ iptables -t nat -A POSTROUTING -s 10.8.0.0/255.255.255.0 -o eth0 -j MASQUERADE
 解决方案：修改`/etc/default/docker`
 
 ```shell
-DOCKER_OPTS=--dns 8.8.8.8 --dns 8.8.4.4
+DOCKER_OPTS="--dns 8.8.8.8 --dns 8.8.4.4 --dns 127.0.0.53"
 ```
 
 dns服务器地址可以改为宿主机的对应ip。
@@ -212,6 +212,8 @@ dns服务器地址可以改为宿主机的对应ip。
 ```c++
 sudo service docker restart
 ```
+
+注意修改后需要删除旧的image文件以更新dns缓存
 
 
 

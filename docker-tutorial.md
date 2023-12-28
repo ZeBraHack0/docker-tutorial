@@ -82,6 +82,7 @@ sudo docker run hello-world
 
 ```shell
 sudo usermod -aG docker USER_NAME
+newgrp docker
 ```
 
 每次重启docker后，可以通过查看docker版本确定服务是否正常运行
