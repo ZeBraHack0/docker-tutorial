@@ -13,7 +13,7 @@ netPrefix="10.0."
 IPPrefix="192.168.211."
 gw="vnet-br0"
 gw_suffix=200
-_version="nvcr.io/nvidia/pytorch:23.05-py3"
+_version="nvcr.io/nvidia/pytorch:23.10-py3"
 hosts="109 110 112 113"
 rank=110
 ####################################################
@@ -163,7 +163,7 @@ docker_create() {
     do
         local _docker_name="Tcal"
         echo_line 80 "-" "Creating docker ${_docker_name} and mount megatron"
-        echo_back "sudo docker run --gpus all -dit --name ${_docker_name} --ipc=host --privileged --cap-add=IPC_LOCK --ulimit memlock=-1 --network host -v ~/workspace:/root/workspace ${_version} "
+        echo_back "sudo docker run --gpus all -dit --name ${_docker_name} --ipc=host --privileged --cap-add=IPC_LOCK --ulimit memlock=-1 --device=/dev/infiniband/uverbs0 --network host -v ~/workspace:/root/workspace ${_version} "
 
         echo_back "sudo docker exec -ti ${_docker_name} apt-get update"
         for _item in ${_sw_list[@]}
@@ -257,6 +257,35 @@ install_docker() {
     echo_back "sudo systemctl restart docker"
 }
 
+install_cuda() {
+    echo_info "install cuda and nvidia drivier"
+    echo_back "wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb"
+    echo_back "sudo dpkg -i cuda-keyring_1.1-1_all.deb"
+    echo_back "sudo apt-get update"
+    echo_back "sudo apt-get -y install cuda"
+    version=545.23.08
+    main_version=$(echo $version | awk -F '.' '{print $1}')
+    echo_info "install nvidia fabric manager, please check the current driver ${version} is correct"
+    echo_back "sudo apt-get update"
+    echo_back "sudo apt-get -y install nvidia-fabricmanager-${main_version}=${version}-*"
+}
+
+
+install() {
+    local nettype=${1} 
+    case ${nettype} in
+        "docker")
+            install_docker
+            ;;
+        "cuda")
+            install_cuda
+            ;;
+        *)
+            show_usage
+            ;;
+    esac
+}
+
 create() {
     local nettype=${1} 
     case ${nettype} in
@@ -325,7 +354,7 @@ case ${global_choice} in
         destroy ${2}
         ;;
     "install")
-        install_docker
+        install ${2}
         ;;
     "help")
         show_usage 
