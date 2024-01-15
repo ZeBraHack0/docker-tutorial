@@ -7,11 +7,15 @@ source ../include/YCOS.sh
 
 ####################################################
 username=""
-num_node=2
-bridge="ovs"  # "ovs" or "brctl"
-netPrefix="11.0.0"
+num_node=1
+bridge="brctl"  # "ovs" or "brctl"
+netPrefix="10.0."
+IPPrefix="192.168.211."
 gw="vnet-br0"
 gw_suffix=200
+_version="nvcr.io/nvidia/pytorch:23.05-py3"
+hosts="109 110 112 113"
+rank=110
 ####################################################
 
 show_usage() {
@@ -59,6 +63,27 @@ set_cmdbr() {
     if [ ${_ret} == -1 ]; then
         echo_back "sudo apt-get install iproute2 -y > /dev/null"
     fi
+}
+
+set_net() {
+    echo_back "sudo docker network create --driver bridge --subnet ${netPrefix}${rank}.0/24 --gateway ${netPrefix}${rank}.${gw_suffix} ${gw}"
+    echo_back "sudo iptables -t filter -P FORWARD ACCEPT"
+    for j in `echo $hosts`;
+    do
+        if [ "$j" != "$rank" ];then
+            echo_back "sudo route add -net ${netPrefix}${j}.0/24 gw ${IPPrefix}${j}"
+        fi
+    done
+}
+
+unset_net() {
+    echo_back "sudo docker network rm ${gw}"
+    for j in `echo $hosts`;
+    do
+        if [ "$j" != "$rank" ];then
+            echo_back "sudo route del -net ${netPrefix}${j}.0/24 gw ${IPPrefix}${j}"
+        fi
+    done
 }
 
 ns_create() {
@@ -124,29 +149,26 @@ docker_check() {
 docker_create() {
     docker_check
 
-    local _version="ubuntu:18.04"
-    local netPrefix="11.0.0"
-    local expgw="ATP-br0"
-    local expgw_suffix=200
     echo_back "sudo docker pull ${_version}"
 
-    echo_back "sudo ${cmdbr} ${addbr} ${gw}"
-    echo_back "sudo ifconfig ${gw} ${netPrefix}.${gw_suffix}/24 up"
+    # echo_back "sudo ${cmdbr} ${addbr} ${gw}"
+    # echo_back "sudo ifconfig ${gw} ${netPrefix}.${gw_suffix}/24 up"
 
     local _sw_list=(net-tools openssh-server vim iputils-ping iperf iperf3 tcpdump)
 
     local _start=1
-    local _end=${num_node}
+    local _end=1
+    mkdir_if_not_exist ~/workspace
     for idx in `seq ${_start} ${_end}`
     do
-        local _docker_name="node_${idx}"
-        echo_line 80 "-" "Creating docker ${_docker_name}"
-        echo_back "sudo docker run -tid --name ${_docker_name} ${_version}"
+        local _docker_name="Tcal"
+        echo_line 80 "-" "Creating docker ${_docker_name} and mount megatron"
+        echo_back "sudo docker run --gpus all -dit --name ${_docker_name} --ipc=host --privileged --cap-add=IPC_LOCK --ulimit memlock=-1 --network host -v ~/workspace:/root/workspace ${_version} "
 
-        echo_back "sudo docker exec -ti ${_docker_name} apt-get update > /dev/null"
+        echo_back "sudo docker exec -ti ${_docker_name} apt-get update"
         for _item in ${_sw_list[@]}
         do
-            echo_back "sudo docker exec -ti ${_docker_name} apt-get install ${_item} -y > /dev/null"
+            echo_back "sudo docker exec -ti ${_docker_name} apt-get install ${_item}"
         done
 
         echo_back "sudo docker exec -ti ${_docker_name} bash -c 'echo PermitRootLogin yes >> /etc/ssh/sshd_config'"
@@ -156,55 +178,55 @@ docker_create() {
         echo_back "ssh-copy-id root@${_ip_addr}"
         echo_info "try 'ssh root@${_ip_addr}' to login to ${_docker_name}"
      
-        local intf0="veth-${idx}"
-        local intf1="br-eth${idx}"
-        local _vm_pid=`sudo docker inspect -f '{{.State.Pid}}' ${_docker_name}`
-	    if [ ! -d /var/run/netns ]; then 
-            echo_back "sudo mkdir /var/run/netns"
-        fi
-        echo_back "sudo ln -s /proc/${_vm_pid}/ns/net /var/run/netns/${_vm_pid}"
-        echo_back "sudo ip link add ${intf0} type veth peer name ${intf1}"
-        echo_back "sudo sysctl net.ipv6.conf.${intf0}.disable_ipv6=1"
-        echo_back "sudo sysctl net.ipv6.conf.${intf1}.disable_ipv6=1"
-        echo_back "sudo ip link set ${intf0} netns ${_vm_pid}"
-        echo_back "sudo ip netns exec ${_vm_pid} ifconfig ${intf0} ${netPrefix}.${idx}/24 up"
-        echo_back "sudo ip link set ${intf1} up"
-        echo_back "sudo ${cmdbr} ${addif} ${gw} ${intf1}"
+        # local intf0="veth-${idx}"
+        # local intf1="br-eth${idx}"
+        # local _vm_pid=`sudo docker inspect -f '{{.State.Pid}}' ${_docker_name}`
+	    # if [ ! -d /var/run/netns ]; then 
+        #     echo_back "sudo mkdir /var/run/netns"
+        # fi
+        # echo_back "sudo ln -s /proc/${_vm_pid}/ns/net /var/run/netns/${_vm_pid}"
+        # echo_back "sudo ip link add ${intf0} type veth peer name ${intf1}"
+        # echo_back "sudo sysctl net.ipv6.conf.${intf0}.disable_ipv6=1"
+        # echo_back "sudo sysctl net.ipv6.conf.${intf1}.disable_ipv6=1"
+        # echo_back "sudo ip link set ${intf0} netns ${_vm_pid}"
+        # echo_back "sudo ip netns exec ${_vm_pid} ifconfig ${intf0} ${netPrefix}.${idx}/24 up"
+        # echo_back "sudo ip link set ${intf1} up"
+        # echo_back "sudo ${cmdbr} ${addif} ${gw} ${intf1}"
 
         echo_line 80 "-" "END"
     done
 
-    echo_back "sudo iptables -t nat -A POSTROUTING -s ${netPrefix}.0/24 ! -d ${netPrefix}.0/24 -j MASQUERADE"
+    # echo_back "sudo iptables -t nat -A POSTROUTING -s ${netPrefix}.0/24 ! -d ${netPrefix}.0/24 -j MASQUERADE"
 
-    echo_back "sudo sysctl -w net.ipv4.ip_forward=1"
-    echo_back "sudo ip link set ${gw} up"
+    # echo_back "sudo sysctl -w net.ipv4.ip_forward=1"
+    # echo_back "sudo ip link set ${gw} up"
 }
 docker_destroy() {
     docker_check
+    unset_net
 
-    local _version="ubuntu:18.04"
     local _start=1
     local _end=${num_node}
     for idx in `seq ${_start} ${_end}`
     do
         local _docker_name="node_${idx}"
         local _ip_addr=`sudo docker inspect -f "{{ .NetworkSettings.IPAddress }}" ${_docker_name}`
-        local _vm_pid=`sudo docker inspect -f '{{.State.Pid}}' ${_docker_name}`
+        # local _vm_pid=`sudo docker inspect -f '{{.State.Pid}}' ${_docker_name}`
         echo_line 80 "-" "Removing docker ${_docker_name}"
         echo_back "sudo docker stop ${_docker_name}"
         echo_back "sudo docker rm -f ${_docker_name}"
         echo_back "ssh-keygen -f '/home/${username}/.ssh/known_hosts' -R '${_ip_addr}'"
         
-        echo_back "sudo unlink /var/run/netns/${_vm_pid}"
+        # echo_back "sudo unlink /var/run/netns/${_vm_pid}"
 
         echo_line 80 "-" "END"
     done
 
-    echo_back "sudo docker rmi ${_version}"
+    # echo_back "sudo docker rmi ${_version}"
 
-    echo_back "sudo ifconfig ${gw} down"
-    echo_back "sudo ${cmdbr} ${delbr} ${gw}"
-    echo_back "sudo iptables -t nat -D POSTROUTING -s ${netPrefix}.0/24 ! -d ${netPrefix}.0/24 -j MASQUERADE"
+    # echo_back "sudo ifconfig ${gw} down"
+    # echo_back "sudo ${cmdbr} ${delbr} ${gw}"
+    # echo_back "sudo iptables -t nat -D POSTROUTING -s ${netPrefix}.0/24 ! -d ${netPrefix}.0/24 -j MASQUERADE"
 }
 
 kvm_create() {
@@ -214,6 +236,25 @@ kvm_create() {
 kvm_destroy() {
     # TODO
     echo_warn "TODO"
+}
+
+install_docker() {
+    echo_info "install docker-ce"
+    echo_back "sudo apt-get update"
+    echo_back "sudo apt-get install apt-transport-https ca-certificates curl software-properties-common"
+    echo_back "sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -"
+    echo_back "sudo apt-key fingerprint 0EBFCD88"
+    echo_back "sudo add-apt-repository ""deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"" "
+    echo_back "sudo apt-get update"
+    echo_back "sudo apt-get install docker-ce"
+
+    echo_info "install nvidia-docker"
+    echo_back "curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add - "
+    distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+    echo_back "curl -s -L https://nvidia.github.io/nvidia-docker/${distribution}/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list"
+    echo_back "sudo apt-get update"
+    echo_back "sudo apt-get install -y nvidia-docker2"
+    echo_back "sudo systemctl restart docker"
 }
 
 create() {
@@ -228,8 +269,8 @@ create() {
         "docker")
             docker_create
             ;;
-        "kvm")
-            kvm_create
+        "subnet")
+            set_net
             ;;
         *)
             show_usage
@@ -252,6 +293,9 @@ destroy() {
         "kvm")
             kvm_destroy
             ;;
+         "subnet")
+            unset_net
+            ;;
         *)
             show_usage
             ;;
@@ -269,13 +313,8 @@ if (( $# == 0 )); then
     exit 0
 fi
 
-if (( $UID == 0 )); then
-    echo_erro "Don't run this script as root!"
-    exit 0
-fi
-
-username=`who am i | awk '{print $1}'`
-set_cmdbr
+username=`whoami | awk '{print $1}'`
+# set_cmdbr
 
 global_choice=${1}
 case ${global_choice} in
@@ -284,6 +323,9 @@ case ${global_choice} in
         ;;
     "destroy")
         destroy ${2}
+        ;;
+    "install")
+        install_docker
         ;;
     "help")
         show_usage 
